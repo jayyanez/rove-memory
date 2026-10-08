@@ -193,7 +193,9 @@ export function normalizeRemote(value) {
   let rest = value.trim().replaceAll('\\', '/');
   let scheme;
   if (/^https?:\/\//i.test(rest)) {
-    scheme = 'https';
+    // http and https stay distinct: a plaintext transport is never the
+    // configured (https-only) remote.
+    scheme = /^https:/i.test(rest) ? 'https' : 'http';
     rest = rest.replace(/^https?:\/\//i, '');
   } else if (/^ssh:\/\//i.test(rest)) {
     scheme = 'ssh';
@@ -217,9 +219,14 @@ export function normalizeRemote(value) {
   return `${scheme}://${account ? `${account}@` : ''}${host}${repositoryPath}`;
 }
 
-/** A URL as it may be shown: any user information is masked. */
-function redactRemote(value) {
-  return value.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, '$1***@');
+/**
+ * A URL as it may be shown: user information, a query and a fragment can
+ * carry a credential, so they are masked.
+ */
+export function redactRemote(value) {
+  return value
+    .replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, '$1***@')
+    .replace(/[?#].*$/, '?***');
 }
 
 export function mergeClaudeSettings(raw, memoryDirectory) {
@@ -645,7 +652,10 @@ function ensureMainBranch(memoryRoot) {
  * the local ones (the publish loop proves that afterwards).
  */
 export function rebaseOntoOrigin(memoryRoot, runGit = git, { reapply = false } = {}) {
-  const rebase = runGit(['rebase', ...(reapply ? ['--reapply-cherry-picks'] : []), 'origin/main'], memoryRoot, {
+  // --no-autostash: an inherited rebase.autoStash would stash another
+  // session's working-tree edits and could leave them in conflict; with a
+  // dirty tree the rebase refuses instead.
+  const rebase = runGit(['rebase', '--no-autostash', ...(reapply ? ['--reapply-cherry-picks'] : []), 'origin/main'], memoryRoot, {
     allowFailure: true,
   });
   if (rebase.status === 0) return;
@@ -735,14 +745,36 @@ function probeProcessStartTime(pid) {
     const value = result.stdout.trim();
     return result.status === 0 && value ? value : null;
   }
-  // `lstart` has one-second resolution, so the identity also carries the
-  // command line: a same-second pid reuse would additionally have to run the
-  // very same command to collide.
-  const result = run('ps', ['-o', 'lstart=,command=', '-p', String(pid)], undefined, {
+  // Only what a process cannot change about itself identifies it: a process
+  // may rename itself (process.title rewrites its command line). On Linux
+  // that is the start time in clock ticks since boot (/proc/<pid>/stat);
+  // elsewhere ps's start time.
+  if (process.platform === 'linux') {
+    try {
+      const ticks = parseProcStatStartTime(readFileSync(`/proc/${pid}/stat`, 'utf8'));
+      if (ticks) return `ticks:${ticks}`;
+    } catch {
+      // Fall back to ps below.
+    }
+  }
+  const result = run('ps', ['-o', 'lstart=', '-p', String(pid)], undefined, {
     allowFailure: true,
   });
   const value = result.stdout.trim();
   return result.status === 0 && value ? value : null;
+}
+
+/**
+ * The start time (field 22) of a /proc/<pid>/stat line. The command name in
+ * field 2 is in parentheses and may itself hold spaces and parentheses, so
+ * the fields are counted after its last closing parenthesis.
+ */
+export function parseProcStatStartTime(stat) {
+  const end = stat.lastIndexOf(')');
+  if (end < 0) return null;
+  // The first field after the name is field 3 (state), so field 22 is the 20th.
+  const value = stat.slice(end + 1).trim().split(/\s+/)[19];
+  return value && /^\d+$/.test(value) ? value : null;
 }
 
 /**
@@ -1256,7 +1288,7 @@ function setup(agentId, cwd) {
       // current tree; a later edit is fenced normally.
       skippedFastForward = describeLease(live.lease, live.classification);
     } else if (existingChanges.length === 0 && unpublishedCommits === 0) {
-      git(['pull', '--ff-only', 'origin', 'main'], memoryRoot);
+      git(['pull', '--ff-only', '--no-autostash', 'origin', 'main'], memoryRoot);
     } else {
       console.warn(
         `Memory repository has unsynced state (${existingChanges.length} changed paths, ${unpublishedCommits} unpublished commits); setup did not pull from GitHub.`,
@@ -1523,7 +1555,7 @@ function edit(agentId, { holderPid, renew, lease: token, reclaimStale }, cwd) {
     if (adoptedCommits > 0) {
       if (!isAncestor(memoryRoot, 'origin/main', 'HEAD')) rebaseOntoOrigin(memoryRoot);
     } else {
-      git(['merge', '--ff-only', 'origin/main'], memoryRoot);
+      git(['merge', '--ff-only', '--no-autostash', 'origin/main'], memoryRoot);
     }
     const baseline = baselineFromOrigin(memoryRoot, agentId);
     if (!baseline.tree) {
@@ -1596,7 +1628,7 @@ function renewLease(memoryRoot, commonGitDirectory, agentId, token) {
   } else {
     // Only working-tree edits: a fast-forward keeps them unless they overlap
     // the remote change, in which case the overlap is named for a hand merge.
-    const forward = git(['merge', '--ff-only', 'origin/main'], memoryRoot, { allowFailure: true });
+    const forward = git(['merge', '--ff-only', '--no-autostash', 'origin/main'], memoryRoot, { allowFailure: true });
     if (forward.status !== 0) {
       const remoteFiles = new Set(
         git(['diff', '--name-only', 'HEAD', 'origin/main', '--', agentId], memoryRoot).stdout.split(/\r?\n/).filter(Boolean),
@@ -1762,7 +1794,10 @@ function sync(agentId, message, token, cwd) {
       // must not leave a lease behind for a stale reclaim.
       console.warn(`${error instanceof Error ? error.message : String(error)} The publish had already completed; releasing the lease anyway.`);
     }
-    const summary = validateMemoryTree(agentRoot);
+    // Summarize what was published, as committed: the working tree may hold
+    // a late edit by now, which finalizeLease keeps the lease for, and must
+    // not turn a completed publish into a reported failure.
+    const summary = validateCommittedTree(memoryRoot, lease.commit, agentId);
     finalizeLease(
       memoryRoot,
       commonGitDirectory,
@@ -1776,7 +1811,7 @@ function sync(agentId, message, token, cwd) {
         // instead of refusing against the pre-publish baseline.
         onKeep: () => {
           if (!isAncestor(memoryRoot, 'origin/main', 'HEAD')) {
-            const forward = git(['merge', '--ff-only', 'origin/main'], memoryRoot, { allowFailure: true });
+            const forward = git(['merge', '--ff-only', '--no-autostash', 'origin/main'], memoryRoot, { allowFailure: true });
             if (forward.status !== 0) {
               // The late edit overlaps a later remote commit: leave the lease
               // exactly as it is (its commit is published, so the next sync

@@ -148,7 +148,8 @@ what the lease (`rove-memory.lease`, same directory) is for:
 - A lease with a holder pid is live while that process exists with the same
   start time, and stale once it is gone; a probe that cannot read the start
   time never dispossesses a holder. A lease without a holder pid is live for
-  30 minutes after the last command that carried its token.
+  30 minutes after the last command that carried its token (the environment
+  variable `ROVE_MEMORY_LEASE_TTL_MS` changes that span; the tests use it).
 - Only the live holder's token can sync or release; a stale token authorizes
   nothing, and its holder re-takes its own lease with
   `edit --reclaim-stale --lease <token>`, which keeps its unsynced edits.

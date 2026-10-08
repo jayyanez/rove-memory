@@ -112,7 +112,7 @@ describe('memory repository safety', () => {
       /rebase was aborted cleanly/,
     );
     expect(calls).toEqual([
-      ['rebase', 'origin/main'],
+      ['rebase', '--no-autostash', 'origin/main'],
       ['rebase', '--abort'],
     ]);
   });
