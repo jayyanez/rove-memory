@@ -36,6 +36,11 @@ describe('transport and diagnostics', () => {
   it('never takes a plaintext http remote for the https one', () => {
     expect(normalizeRemote('http://github.com/owner/memory.git')).not.toBe(normalizeRemote('https://github.com/owner/memory.git'));
     expect(normalizeRemote('HTTP://example.com/owner/memory')).not.toBe(normalizeRemote('https://example.com/owner/memory'));
+    // Not through GitHub's HTTPS/SSH equivalence either, with any account.
+    for (const plaintext of ['http://git@github.com/owner/memory', 'http://user@github.com/owner/memory.git', 'http://github.com/owner/memory']) {
+      expect(normalizeRemote(plaintext)).not.toBe(normalizeRemote('https://github.com/owner/memory.git'));
+      expect(normalizeRemote(plaintext)).not.toBe(normalizeRemote('git@github.com:owner/memory.git'));
+    }
     expect(normalizeRemote('HTTPS://GitHub.com/owner/memory')).toBe(normalizeRemote('https://github.com/owner/memory.git'));
   });
 

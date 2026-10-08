@@ -213,7 +213,8 @@ export function normalizeRemote(value) {
   const at = authority.lastIndexOf('@');
   const account = at < 0 ? '' : authority.slice(0, at);
   const host = authority.slice(at + 1).toLowerCase();
-  if (host === 'github.com' && account === (scheme === 'https' ? '' : 'git')) {
+  const githubForm = (scheme === 'https' && account === '') || (scheme === 'ssh' && account === 'git');
+  if (host === 'github.com' && githubForm) {
     return `github.com${repositoryPath}`;
   }
   return `${scheme}://${account ? `${account}@` : ''}${host}${repositoryPath}`;
