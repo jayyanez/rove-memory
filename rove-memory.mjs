@@ -29,14 +29,10 @@ export const AGENT_MAX_BYTES = 2 * 1024 * 1024;
  */
 export const LEASE_TTL_MS = 30 * 60 * 1000;
 /**
- * The lock and lease live in the project's Git directory as
- * `<state name>.lock` / `<state name>.lease`. A project can name them
- * (`roveMemory.stateName`), for example to share them with an older tool
- * that used other names, so the two exclude each other.
+ * The operation lock, in the project's Git directory: one per repository,
+ * taken by every command that changes the memory checkout or the lease.
  */
-export const DEFAULT_STATE_NAME = 'rove-memory';
-export const LEASE_FILE = `${DEFAULT_STATE_NAME}.lease`;
-export const LOCK_FILE = `${DEFAULT_STATE_NAME}.lock`;
+export const LOCK_FILE = 'rove-memory.lock';
 /** The repository-local Git setting that can hold the memory remote instead of package.json. */
 export const LOCAL_REMOTE_KEY = 'rove-memory.remote';
 /** Test suites point the memory remote at a local bare repository through this variable. */
@@ -59,11 +55,10 @@ const DEFAULT_LOCK_IO = {
 /**
  * The project's memory configuration, from the `roveMemory` field of the
  * checkout's package.json:
- * `{ "project": "<display name>", "remote": "<private memory repository URL>",
- * "stateName": "<lock and lease file name>" }`. `remote` may be left out and
- * kept in the repository's local Git configuration instead (a public project
- * need not publish the address of its private memory); `stateName` defaults
- * to `rove-memory`.
+ * `{ "project": "<display name>", "remote": "<private memory repository URL>" }`.
+ * `remote` may be left out and kept in the repository's local Git
+ * configuration instead (a public project need not publish the address of its
+ * private memory).
  */
 export function parseProjectConfig(raw, source = 'package.json') {
   let manifest;
@@ -78,17 +73,14 @@ export function parseProjectConfig(raw, source = 'package.json') {
       `${source} has no "${CONFIG_FIELD}" object; add { "project": "<name>", "remote": "<private memory repository URL>" }.`,
     );
   }
-  const { project, remote, stateName = DEFAULT_STATE_NAME } = config;
+  const { project, remote } = config;
   if (typeof project !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(project)) {
     throw new Error(`"${CONFIG_FIELD}.project" must be 1-64 letters, digits, spaces, dots, hyphens or underscores.`);
   }
   if (remote !== undefined && (typeof remote !== 'string' || !isNetworkRemote(remote))) {
     throw new Error(`"${CONFIG_FIELD}.remote" must be an https:// or SSH Git URL.`);
   }
-  if (typeof stateName !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(stateName)) {
-    throw new Error(`"${CONFIG_FIELD}.stateName" must be 1-64 lowercase letters, digits or hyphens.`);
-  }
-  return { project, remote: remote ?? null, stateName };
+  return { project, remote: remote ?? null };
 }
 
 /**
@@ -141,52 +133,72 @@ function storeLocalRemote(checkoutRoot, configured, requested) {
   if (!stored) git(['config', '--local', LOCAL_REMOTE_KEY, requested], checkoutRoot);
 }
 
-/** The lock and lease file names of the running command (set from its project's configuration). */
-let stateName = DEFAULT_STATE_NAME;
+/**
+ * The lease's name, for the running command: derived from its memory
+ * repository (see leaseNamespace), set once the remote is resolved.
+ */
+let leaseName = null;
 
 /**
- * Read the project's configuration for a command: its name, its memory
- * remote (resolved for the test suites), and the names of the lock and lease
- * files, which every later step of the command uses.
+ * The name of a memory repository's lease (`<name>.lease`) and namespace
+ * lock (`<name>.lock`) in the project's Git directory: the repository's own
+ * name, lower-cased, made of letters, digits and hyphens, and always holding
+ * "memory" so it can never be one of Git's own files (index, HEAD, config).
+ * It depends only on the memory repository, which every worktree must share
+ * (a checkout cloned from another remote is refused), so every worktree uses
+ * the same lease; an earlier copy of this tool that named its files after
+ * the memory repository shares them too.
  */
-function projectContext(checkoutRoot, canonicalRoot) {
+export function leaseNamespace(remote) {
+  const last = normalizeRemote(remote).split('/').filter(Boolean).at(-1) ?? '';
+  const name = last.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 56);
+  return name.includes('memory') ? name : `${name ? `${name}-` : ''}memory`;
+}
+
+/** Read the project's configuration for a command: its name and configured memory remote. */
+function projectContext(checkoutRoot) {
   const config = readProjectConfig(checkoutRoot);
-  stateName = repositoryStateName(canonicalRoot, checkoutRoot, config.stateName);
-  return { project: config.project, configuredRemote: config.remote, stateName };
+  return { project: config.project, configuredRemote: config.remote };
 }
 
 /**
- * Every worktree of a repository shares one memory checkout, so it must
- * share one lock and one lease: the state name is the canonical checkout's
- * (the default when its package.json has no `roveMemory`), and a worktree
- * whose own configuration names another is refused rather than splitting
- * the lock and lease.
+ * The command's memory remote (resolved for the test suites), which also
+ * fixes the lease namespace from the remote the project chose.
  */
-function repositoryStateName(canonicalRoot, checkoutRoot, checkoutStateName) {
-  if (path.resolve(canonicalRoot) === path.resolve(checkoutRoot)) return checkoutStateName;
-  let canonical = DEFAULT_STATE_NAME;
-  const file = path.join(canonicalRoot, 'package.json');
-  if (existsSync(file)) {
-    const raw = readFileSync(file, 'utf8');
-    let hasConfig = false;
-    try {
-      const manifest = JSON.parse(raw);
-      hasConfig = Boolean(manifest && typeof manifest === 'object' && manifest[CONFIG_FIELD]);
-    } catch {
-      hasConfig = false;
-    }
-    if (hasConfig) canonical = parseProjectConfig(raw, file).stateName;
-  }
-  if (canonical !== checkoutStateName) {
-    throw new Error(
-      `This checkout's lock and lease name (${checkoutStateName}) differs from the canonical checkout's (${canonical}); every worktree must use the same files for the one memory checkout. Use the same "${CONFIG_FIELD}.stateName" in both, or run from the canonical checkout.`,
-    );
-  }
-  return canonical;
+function resolvedRemote(checkoutRoot, configuredRemote) {
+  const chosen = chooseRemote(configuredRemote, localRemote(checkoutRoot));
+  leaseName = leaseNamespace(chosen);
+  return resolveMemoryRemote(chosen);
 }
 
-function resolvedRemote(checkoutRoot, configuredRemote) {
-  return resolveMemoryRemote(chooseRemote(configuredRemote, localRemote(checkoutRoot)));
+/**
+ * After the operation lock: the lease namespace's lock too (when it is a
+ * different file), so a command also waits for an earlier tool that locks
+ * only that file. Returns the release of both; on failure the operation lock
+ * is the caller's to release.
+ */
+function withNamespaceLock(commonGitDirectory, agentId, operation, releaseOperation) {
+  const namespaceLock = `${leaseName}.lock`;
+  if (namespaceLock === LOCK_FILE) return releaseOperation;
+  const releaseNamespace = acquireMemoryLock(commonGitDirectory, agentId, operation, DEFAULT_LOCK_IO, namespaceLock);
+  return () => {
+    try {
+      releaseNamespace();
+    } finally {
+      releaseOperation();
+    }
+  };
+}
+
+/** The operation lock and the lease namespace's lock, in that order. */
+function acquireLocks(commonGitDirectory, agentId, operation) {
+  const releaseOperation = acquireMemoryLock(commonGitDirectory, agentId, operation);
+  try {
+    return withNamespaceLock(commonGitDirectory, agentId, operation, releaseOperation);
+  } catch (error) {
+    releaseOperation();
+    throw error;
+  }
 }
 
 /**
@@ -693,8 +705,9 @@ export function acquireMemoryLock(
   agentId,
   operation,
   lockIo = DEFAULT_LOCK_IO,
+  fileName = LOCK_FILE,
 ) {
-  const lockPath = path.join(commonGitDirectory, `${stateName}.lock`);
+  const lockPath = path.join(commonGitDirectory, fileName);
   const lockToken = randomUUID();
   const lockContents = `${JSON.stringify({
     agent: agentId,
@@ -934,7 +947,8 @@ export function classifyLease(lease, { now = Date.now(), probe = probeProcess, t
 }
 
 function leasePath(commonGitDirectory) {
-  return path.join(commonGitDirectory, `${stateName}.lease`);
+  if (!leaseName) throw new Error('The lease namespace is not known before the memory remote is resolved.');
+  return path.join(commonGitDirectory, `${leaseName}.lease`);
 }
 
 function readLease(commonGitDirectory) {
@@ -1389,17 +1403,19 @@ function configureClaude(checkoutRoot, memoryRoot) {
 
 function setup(agentId, cwd, requestedRemote) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const { project, configuredRemote } = projectContext(checkoutRoot, canonicalRoot);
+  const { project, configuredRemote } = projectContext(checkoutRoot);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
-  const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, 'setup');
+  const releaseOperation = acquireMemoryLock(commonGitDirectory, agentId, 'setup');
   let remote;
+  let releaseLock;
   try {
     // Under the operation lock: two setups never both see "no remote stored"
     // and then store different ones.
     if (requestedRemote !== undefined) storeLocalRemote(checkoutRoot, configuredRemote, requestedRemote);
     remote = resolvedRemote(checkoutRoot, configuredRemote);
+    releaseLock = withNamespaceLock(commonGitDirectory, agentId, 'setup', releaseOperation);
   } catch (error) {
-    releaseLock();
+    releaseOperation();
     throw error;
   }
   let published = null;
@@ -1492,7 +1508,7 @@ function setup(agentId, cwd, requestedRemote) {
 
 function status(agentId, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const { project, configuredRemote } = projectContext(checkoutRoot, canonicalRoot);
+  const { project, configuredRemote } = projectContext(checkoutRoot);
   const remote = resolvedRemote(checkoutRoot, configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
   console.log(`Project: ${project} (memory remote ${remote}${configuredRemote ? '' : `, from the local Git setting ${LOCAL_REMOTE_KEY}`})`);
@@ -1571,9 +1587,9 @@ function requireMemoryReady(memoryRoot, agentId, remote) {
 
 function edit(agentId, { holderPid, renew, lease: token, reclaimStale }, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const remote = resolvedRemote(checkoutRoot, projectContext(checkoutRoot, canonicalRoot).configuredRemote);
+  const remote = resolvedRemote(checkoutRoot, projectContext(checkoutRoot).configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
-  const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, renew ? 'edit --renew' : 'edit');
+  const releaseLock = acquireLocks(commonGitDirectory, agentId, renew ? 'edit --renew' : 'edit');
   try {
     requireMemoryReady(memoryRoot, agentId, remote);
     if (renew) {
@@ -1799,9 +1815,9 @@ function renewLease(memoryRoot, commonGitDirectory, agentId, token) {
 
 function release(agentId, token, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const remote = resolvedRemote(checkoutRoot, projectContext(checkoutRoot, canonicalRoot).configuredRemote);
+  const remote = resolvedRemote(checkoutRoot, projectContext(checkoutRoot).configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
-  const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, 'release');
+  const releaseLock = acquireLocks(commonGitDirectory, agentId, 'release');
   try {
     requireMemoryReady(memoryRoot, agentId, remote);
     requireOwnLease(commonGitDirectory, agentId, token, 'release');
@@ -1827,10 +1843,10 @@ function release(agentId, token, cwd) {
 
 function sync(agentId, message, token, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const { project, configuredRemote } = projectContext(checkoutRoot, canonicalRoot);
+  const { project, configuredRemote } = projectContext(checkoutRoot);
   const remote = resolvedRemote(checkoutRoot, configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
-  const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, 'sync');
+  const releaseLock = acquireLocks(commonGitDirectory, agentId, 'sync');
   try {
     const agentRoot = requireMemoryReady(memoryRoot, agentId, remote);
     if (!token) {
@@ -1971,6 +1987,7 @@ function sync(agentId, message, token, cwd) {
 }
 
 export function main(argv = process.argv.slice(2), cwd = process.cwd()) {
+  leaseName = null;
   const parsed = parseArguments(argv);
   const { command, agentId, message } = parsed;
   if (command === 'setup') setup(agentId, cwd, parsed.remote);

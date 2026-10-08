@@ -76,16 +76,18 @@ and which is never committed; every later command reads it from there. A
 different value is never overwritten silently, and package.json and the local
 setting may both be present only when they name the same repository.
 
-### Sharing the lock and lease with another tool
+### Where the lock and lease live
 
-The lock and lease are `<stateName>.lock` and `<stateName>.lease` in the
-project's Git directory, with `stateName` defaulting to `rove-memory`. A
-project moving from an earlier copy of this tool can set
-`"stateName": "<the old name>"` in `roveMemory`, so that sessions still
-running the old copy and sessions running Rove Memory exclude each other
-while both are in use. The lease format is the same. The name is the
-canonical checkout's: every worktree shares one memory checkout, so a
-worktree whose configuration names other files is refused.
+In the project's Git directory, shared by every linked worktree: the
+operation lock `rove-memory.lock`, and the edit lease named after the memory
+repository — `<name>.lease`, with a `<name>.lock` taken together with the
+operation lock — where `<name>` is the memory repository's name (lower-case
+letters, digits and hyphens, always holding "memory", e.g.
+`project-agent-memory`). Every worktree must use the same memory repository
+(a checkout cloned from another remote is refused), so every worktree uses the
+same lease. An earlier copy of this tool that named its files after the
+memory repository shares the lease and its lock with Rove Memory while both
+are in use; the lease format is the same.
 
 ### A section for the project's agent files
 
@@ -168,10 +170,10 @@ instructions say, and write through the same lease.
 ### The edit lease
 
 Commands that change the memory checkout or the lease hold one operation lock
-(`rove-memory.lock`, or `<stateName>.lock`, in the project's Git directory), so linked worktrees never
-change the checkout at the same time. File writes cannot be locked, which is
-what the lease (`rove-memory.lease` or `<stateName>.lease`, same directory)
-is for:
+(`rove-memory.lock` in the project's Git directory, see "Where the lock and
+lease live"), so linked worktrees never change the checkout at the same time.
+File writes cannot be locked, which is what the lease (`<name>.lease`, same
+directory) is for:
 
 - A lease with a holder pid is live while that process exists with the same
   start time, and stale once it is gone; a probe that cannot read the start

@@ -16,9 +16,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach } from 'node:test';
 import {
-  LEASE_FILE,
   LEASE_TTL_VARIABLE,
   TEST_REMOTE_VARIABLE,
+  leaseNamespace,
   main,
   resetProcessStartTimeCache,
 } from '../rove-memory.mjs';
@@ -88,7 +88,7 @@ export function createFixture({ config = FIXTURE_CONFIG } = {}) {
     origin,
     checkout,
     memory: path.join(checkout, '.agent-memory'),
-    leaseFile: path.join(checkout, '.git', LEASE_FILE),
+    leaseFile: config.remote ? path.join(checkout, '.git', `${leaseNamespace(config.remote)}.lease`) : null,
     otherMachine,
   };
 }

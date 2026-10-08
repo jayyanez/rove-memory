@@ -7,9 +7,11 @@
   it is stored in the repository's local Git configuration
   (`rove-memory.remote`) and read by every command. Two different remotes
   (package.json and the local setting) are refused.
-- `roveMemory.stateName` names the lock and lease files
-  (`<stateName>.lock` / `.lease`, default `rove-memory`), so a project can
-  share them with an earlier copy of the tool while both are in use.
+- The edit lease is named after the memory repository (`<name>.lease`, with a
+  `<name>.lock` taken after the operation lock `rove-memory.lock`), so every
+  worktree shares it and an earlier copy of the tool that used those names
+  excludes and is excluded. Upgrading from 1.0.0 moves the lease from
+  `rove-memory.lease`: upgrade while no lease is held.
 
 ## 1.0.0 — 2026-10-08
 

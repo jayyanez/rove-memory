@@ -1,14 +1,15 @@
 /**
  * 1.1: the memory remote can live in the repository's local Git
  * configuration instead of package.json (so a public project does not publish
- * the address of its private memory), and the lock and lease files can be
- * named per project (so a project can share them with an older tool).
+ * the address of its private memory), and the edit lease is named after the
+ * memory repository (so every worktree shares it, and so does an earlier tool
+ * that used that name).
  */
 import { existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { expect } from './expect.mjs';
-import { LOCAL_REMOTE_KEY, chooseRemote, main, parseArguments, parseProjectConfig } from '../rove-memory.mjs';
+import { LOCAL_REMOTE_KEY, chooseRemote, leaseNamespace, main, parseArguments, parseProjectConfig } from '../rove-memory.mjs';
 import {
   FIXTURE_CONFIG,
   acquire,
@@ -37,12 +38,8 @@ function localSetting(fixture) {
 }
 
 describe('configuration without a published remote', () => {
-  it('accepts a package.json with no remote, and a valid state name', () => {
-    expect(parseProjectConfig(manifest({ project: 'Public' }))).toEqual({ project: 'Public', remote: null, stateName: 'rove-memory' });
-    expect(parseProjectConfig(manifest({ project: 'Legacy', stateName: 'legacy-agent-memory' })).stateName).toBe('legacy-agent-memory');
-    for (const stateName of ['', 'Upper', '../escape', 'a/b', 'x'.repeat(65), 7]) {
-      expect(() => parseProjectConfig(manifest({ project: 'X', stateName }))).toThrow(/"roveMemory\.stateName"/);
-    }
+  it('accepts a package.json with no remote', () => {
+    expect(parseProjectConfig(manifest({ project: 'Public' }))).toEqual({ project: 'Public', remote: null });
   });
 
   it('chooses the configured or the local remote, refuses two different ones or none, and never echoes an invalid local value', () => {
@@ -134,41 +131,46 @@ describe('a project that keeps its remote in local Git configuration', () => {
   });
 });
 
-describe('a project that names its lock and lease', () => {
-  it('uses <stateName>.lock and <stateName>.lease, and a lease there excludes a second writer', () => {
-    const fixture = createFixture({ config: { ...FIXTURE_CONFIG, stateName: 'legacy-agent-memory' } });
+describe('the lease is named after the memory repository', () => {
+  it('derives one name per memory repository that can never be one of Git\'s own files', () => {
+    for (const remote of [
+      'https://github.com/example-owner/project-agent-memory.git',
+      'git@github.com:example-owner/project-agent-memory.git',
+      'ssh://git@github.com/example-owner/project-agent-memory',
+    ]) {
+      expect(leaseNamespace(remote)).toBe('project-agent-memory');
+    }
+    expect(leaseNamespace('https://example.com/owner/index.git')).toBe('index-memory');
+    expect(leaseNamespace('https://example.com/owner/HEAD')).toBe('head-memory');
+    expect(leaseNamespace('https://example.com/owner/Weird_Name.Repo.git')).toBe('weird-name-repo-memory');
+    expect(leaseNamespace('https://example.com/owner/rove-memory.git')).toBe('rove-memory');
+  });
+
+  it('keeps the lease in <memory repository>.lease, and waits for an earlier tool that holds that name\'s lock', () => {
+    const fixture = createFixture();
     expectOk(runScript(fixture, ['setup', '--agent', 'codex']));
     expectOk(runScript(fixture, ['setup', '--agent', 'claude']));
-    acquire(fixture);
     const gitDirectory = path.join(fixture.checkout, '.git');
-    expect(existsSync(path.join(gitDirectory, 'legacy-agent-memory.lease'))).toBe(true);
+    const token = acquire(fixture);
+    expect(existsSync(path.join(gitDirectory, 'fixture-agent-memory.lease'))).toBe(true);
     expect(existsSync(path.join(gitDirectory, 'rove-memory.lease'))).toBe(false);
-    expect(existsSync(path.join(gitDirectory, 'legacy-agent-memory.lock'))).toBe(false);
+    expect(existsSync(path.join(gitDirectory, 'fixture-agent-memory.lock'))).toBe(false);
+    expectOk(runScript(fixture, ['release', '--agent', 'claude', '--lease', token]));
 
-    const second = runScript(fixture, ['edit', '--agent', 'codex']);
-    expect(second.ok).toBe(false);
-    expect(second.error).toMatch(/live memory edit lease already exists/);
+    // An earlier tool that locks only <memory repository>.lock is mid-operation.
+    writeFileSync(
+      path.join(gitDirectory, 'fixture-agent-memory.lock'),
+      `${JSON.stringify({ agent: 'codex', operation: 'sync', pid: 1, startedAt: '2026-10-08T00:00:00.000Z' })}\n`,
+    );
+    const edit = runScript(fixture, ['edit', '--agent', 'claude']);
+    expect(edit.ok).toBe(false);
+    expect(edit.error).toMatch(/Unable to acquire the memory operation lock at .*fixture-agent-memory\.lock/);
+    expect(existsSync(path.join(gitDirectory, 'rove-memory.lock'))).toBe(false);
+    expect(existsSync(fixture.leaseFile)).toBe(false);
   });
 });
 
-describe('one lock and one lease per repository', () => {
-  it('refuses a worktree whose configuration names other lock and lease files than the canonical checkout', () => {
-    const fixture = createFixture();
-    expectOk(runScript(fixture, ['setup', '--agent', 'claude']));
-    const worktree = path.join(path.dirname(fixture.checkout), 'other-state');
-    git(['worktree', 'add', '-q', '-b', 'other-state', worktree], fixture.checkout);
-    writeFileSync(path.join(worktree, 'package.json'), `${JSON.stringify({ name: 'fixture', private: true, roveMemory: { ...FIXTURE_CONFIG, stateName: 'other-state' } }, null, 2)}\n`);
-
-    let error = null;
-    try {
-      main(['status', '--agent', 'claude'], worktree);
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error?.message ?? '').toMatch(/differs from the canonical checkout's \(rove-memory\)/);
-    expect(existsSync(path.join(fixture.checkout, '.git', 'other-state.lease'))).toBe(false);
-  });
-
+describe('one operation lock per repository', () => {
   it('stores --remote only under the operation lock', () => {
     const fixture = createFixture({ config: { project: 'Public' } });
     const lock = path.join(fixture.checkout, '.git', 'rove-memory.lock');
