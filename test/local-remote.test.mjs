@@ -4,7 +4,7 @@
  * the address of its private memory), and the lock and lease files can be
  * named per project (so a project can share them with an older tool).
  */
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { expect } from './expect.mjs';
@@ -148,5 +148,34 @@ describe('a project that names its lock and lease', () => {
     const second = runScript(fixture, ['edit', '--agent', 'codex']);
     expect(second.ok).toBe(false);
     expect(second.error).toMatch(/live memory edit lease already exists/);
+  });
+});
+
+describe('one lock and one lease per repository', () => {
+  it('refuses a worktree whose configuration names other lock and lease files than the canonical checkout', () => {
+    const fixture = createFixture();
+    expectOk(runScript(fixture, ['setup', '--agent', 'claude']));
+    const worktree = path.join(path.dirname(fixture.checkout), 'other-state');
+    git(['worktree', 'add', '-q', '-b', 'other-state', worktree], fixture.checkout);
+    writeFileSync(path.join(worktree, 'package.json'), `${JSON.stringify({ name: 'fixture', private: true, roveMemory: { ...FIXTURE_CONFIG, stateName: 'other-state' } }, null, 2)}\n`);
+
+    let error = null;
+    try {
+      main(['status', '--agent', 'claude'], worktree);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error?.message ?? '').toMatch(/differs from the canonical checkout's \(rove-memory\)/);
+    expect(existsSync(path.join(fixture.checkout, '.git', 'other-state.lease'))).toBe(false);
+  });
+
+  it('stores --remote only under the operation lock', () => {
+    const fixture = createFixture({ config: { project: 'Public' } });
+    const lock = path.join(fixture.checkout, '.git', 'rove-memory.lock');
+    writeFileSync(lock, `${JSON.stringify({ agent: 'codex', operation: 'setup', pid: 1, startedAt: '2026-10-08T00:00:00.000Z' })}\n`);
+    const setup = runScript(fixture, ['setup', '--agent', 'claude', '--remote', PUBLIC_REMOTE]);
+    expect(setup.ok).toBe(false);
+    expect(setup.error).toMatch(/Unable to acquire the memory operation lock/);
+    expect(localSetting(fixture)).toBeNull();
   });
 });

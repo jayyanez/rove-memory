@@ -149,10 +149,40 @@ let stateName = DEFAULT_STATE_NAME;
  * remote (resolved for the test suites), and the names of the lock and lease
  * files, which every later step of the command uses.
  */
-function projectContext(checkoutRoot) {
+function projectContext(checkoutRoot, canonicalRoot) {
   const config = readProjectConfig(checkoutRoot);
-  stateName = config.stateName;
-  return { project: config.project, configuredRemote: config.remote, stateName: config.stateName };
+  stateName = repositoryStateName(canonicalRoot, checkoutRoot, config.stateName);
+  return { project: config.project, configuredRemote: config.remote, stateName };
+}
+
+/**
+ * Every worktree of a repository shares one memory checkout, so it must
+ * share one lock and one lease: the state name is the canonical checkout's
+ * (the default when its package.json has no `roveMemory`), and a worktree
+ * whose own configuration names another is refused rather than splitting
+ * the lock and lease.
+ */
+function repositoryStateName(canonicalRoot, checkoutRoot, checkoutStateName) {
+  if (path.resolve(canonicalRoot) === path.resolve(checkoutRoot)) return checkoutStateName;
+  let canonical = DEFAULT_STATE_NAME;
+  const file = path.join(canonicalRoot, 'package.json');
+  if (existsSync(file)) {
+    const raw = readFileSync(file, 'utf8');
+    let hasConfig = false;
+    try {
+      const manifest = JSON.parse(raw);
+      hasConfig = Boolean(manifest && typeof manifest === 'object' && manifest[CONFIG_FIELD]);
+    } catch {
+      hasConfig = false;
+    }
+    if (hasConfig) canonical = parseProjectConfig(raw, file).stateName;
+  }
+  if (canonical !== checkoutStateName) {
+    throw new Error(
+      `This checkout's lock and lease name (${checkoutStateName}) differs from the canonical checkout's (${canonical}); every worktree must use the same files for the one memory checkout. Use the same "${CONFIG_FIELD}.stateName" in both, or run from the canonical checkout.`,
+    );
+  }
+  return canonical;
 }
 
 function resolvedRemote(checkoutRoot, configuredRemote) {
@@ -1359,11 +1389,19 @@ function configureClaude(checkoutRoot, memoryRoot) {
 
 function setup(agentId, cwd, requestedRemote) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const { project, configuredRemote } = projectContext(checkoutRoot);
-  if (requestedRemote !== undefined) storeLocalRemote(checkoutRoot, configuredRemote, requestedRemote);
-  const remote = resolvedRemote(checkoutRoot, configuredRemote);
+  const { project, configuredRemote } = projectContext(checkoutRoot, canonicalRoot);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
   const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, 'setup');
+  let remote;
+  try {
+    // Under the operation lock: two setups never both see "no remote stored"
+    // and then store different ones.
+    if (requestedRemote !== undefined) storeLocalRemote(checkoutRoot, configuredRemote, requestedRemote);
+    remote = resolvedRemote(checkoutRoot, configuredRemote);
+  } catch (error) {
+    releaseLock();
+    throw error;
+  }
   let published = null;
   let configuredClaude = false;
   let deferredBootstrap = false;
@@ -1454,7 +1492,7 @@ function setup(agentId, cwd, requestedRemote) {
 
 function status(agentId, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const { project, configuredRemote } = projectContext(checkoutRoot);
+  const { project, configuredRemote } = projectContext(checkoutRoot, canonicalRoot);
   const remote = resolvedRemote(checkoutRoot, configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
   console.log(`Project: ${project} (memory remote ${remote}${configuredRemote ? '' : `, from the local Git setting ${LOCAL_REMOTE_KEY}`})`);
@@ -1533,7 +1571,7 @@ function requireMemoryReady(memoryRoot, agentId, remote) {
 
 function edit(agentId, { holderPid, renew, lease: token, reclaimStale }, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const remote = resolvedRemote(checkoutRoot, projectContext(checkoutRoot).configuredRemote);
+  const remote = resolvedRemote(checkoutRoot, projectContext(checkoutRoot, canonicalRoot).configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
   const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, renew ? 'edit --renew' : 'edit');
   try {
@@ -1761,7 +1799,7 @@ function renewLease(memoryRoot, commonGitDirectory, agentId, token) {
 
 function release(agentId, token, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const remote = resolvedRemote(checkoutRoot, projectContext(checkoutRoot).configuredRemote);
+  const remote = resolvedRemote(checkoutRoot, projectContext(checkoutRoot, canonicalRoot).configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
   const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, 'release');
   try {
@@ -1789,7 +1827,7 @@ function release(agentId, token, cwd) {
 
 function sync(agentId, message, token, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const { project, configuredRemote } = projectContext(checkoutRoot);
+  const { project, configuredRemote } = projectContext(checkoutRoot, canonicalRoot);
   const remote = resolvedRemote(checkoutRoot, configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
   const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, 'sync');

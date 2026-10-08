@@ -83,7 +83,9 @@ project's Git directory, with `stateName` defaulting to `rove-memory`. A
 project moving from an earlier copy of this tool can set
 `"stateName": "<the old name>"` in `roveMemory`, so that sessions still
 running the old copy and sessions running Rove Memory exclude each other
-while both are in use. The lease format is the same.
+while both are in use. The lease format is the same. The name is the
+canonical checkout's: every worktree shares one memory checkout, so a
+worktree whose configuration names other files is refused.
 
 ### A section for the project's agent files
 
