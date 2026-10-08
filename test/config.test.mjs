@@ -58,7 +58,6 @@ describe('project configuration', () => {
       'https://github.com',
       'git@github.com:/x.git',
       '',
-      undefined,
     ]) {
       expect(() => parseProjectConfig(manifest({ project: 'X', remote }))).toThrow(/"roveMemory\.remote"/);
     }

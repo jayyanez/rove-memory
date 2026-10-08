@@ -34,6 +34,11 @@ worktree (after `pnpm install`, which installs the tool):
 pnpm memory setup --agent <harness-id>
 ```
 
+When the project keeps the memory's address out of its `package.json`, the
+first setup on a computer also needs
+`--remote <private memory repository URL>`; the user who owns the memory
+provides it, and it is stored in the repository's local Git configuration.
+
 It finds the canonical checkout through Git's common directory, clones the
 project's private memory repository there when it is missing, fast-forwards a
 clean memory checkout, and creates and publishes the harness folder when it
