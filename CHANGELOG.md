@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0 — 2026-10-08
+
+- The memory remote can be kept out of `package.json`: leave out
+  `roveMemory.remote` and run `setup --remote <url>` once on each computer;
+  it is stored in the repository's local Git configuration
+  (`rove-memory.remote`) and read by every command. Two different remotes
+  (package.json and the local setting) are refused.
+- `roveMemory.stateName` names the lock and lease files
+  (`<stateName>.lock` / `.lease`, default `rove-memory`), so a project can
+  share them with an earlier copy of the tool while both are in use.
+
 ## 1.0.0 — 2026-10-08
 
 First public release.

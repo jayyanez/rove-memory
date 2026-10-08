@@ -26,7 +26,7 @@ function manifest(roveMemory) {
 describe('project configuration', () => {
   it('reads the project name and memory remote from package.json', () => {
     expect(parseProjectConfig(manifest({ project: 'Garden', remote: 'https://github.com/example-owner/garden-agent-memory.git' })))
-      .toEqual({ project: 'Garden', remote: 'https://github.com/example-owner/garden-agent-memory.git' });
+      .toEqual({ project: 'Garden', remote: 'https://github.com/example-owner/garden-agent-memory.git', stateName: 'rove-memory' });
     expect(parseProjectConfig(manifest({ project: 'lab-tools', remote: 'git@github.com:example-owner/lab-tools-agent-memory.git' })).remote)
       .toBe('git@github.com:example-owner/lab-tools-agent-memory.git');
     expect(parseProjectConfig(manifest({ project: 'Kite works_2.0', remote: 'ssh://git@github.com/example-owner/x.git' })).project)
@@ -58,7 +58,6 @@ describe('project configuration', () => {
       'https://github.com',
       'git@github.com:/x.git',
       '',
-      undefined,
     ]) {
       expect(() => parseProjectConfig(manifest({ project: 'X', remote }))).toThrow(/"roveMemory\.remote"/);
     }

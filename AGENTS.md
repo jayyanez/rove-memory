@@ -33,8 +33,9 @@ repository and GitHub artifacts are in English.
   validated commit, and a rebase must reproduce the agent's commits one for
   one.
 - **Node.js built-ins only** at runtime, on Windows, macOS and Linux.
-- **Compatibility.** The `roveMemory` configuration, the command line, the
-  `.agent-memory/` folder and the lock and lease files are what adopting
+- **Compatibility.** The `roveMemory` configuration (and the local
+  `rove-memory.remote` setting), the command line, the `.agent-memory/`
+  folder and the lock and lease files are what adopting
   projects rely on: change them only together with `README.md`, `POLICY.md`,
   `CHANGELOG.md` and a version bump.
 

@@ -28,8 +28,17 @@ export const AGENT_MAX_BYTES = 2 * 1024 * 1024;
  * holder process ignores the TTL and is stale only when that process is gone.
  */
 export const LEASE_TTL_MS = 30 * 60 * 1000;
-export const LEASE_FILE = 'rove-memory.lease';
-export const LOCK_FILE = 'rove-memory.lock';
+/**
+ * The lock and lease live in the project's Git directory as
+ * `<state name>.lock` / `<state name>.lease`. A project can name them
+ * (`roveMemory.stateName`), for example to share them with an older tool
+ * that used other names, so the two exclude each other.
+ */
+export const DEFAULT_STATE_NAME = 'rove-memory';
+export const LEASE_FILE = `${DEFAULT_STATE_NAME}.lease`;
+export const LOCK_FILE = `${DEFAULT_STATE_NAME}.lock`;
+/** The repository-local Git setting that can hold the memory remote instead of package.json. */
+export const LOCAL_REMOTE_KEY = 'rove-memory.remote';
 /** Test suites point the memory remote at a local bare repository through this variable. */
 export const TEST_REMOTE_VARIABLE = 'ROVE_MEMORY_TEST_REMOTE';
 export const LEASE_TTL_VARIABLE = 'ROVE_MEMORY_LEASE_TTL_MS';
@@ -50,7 +59,11 @@ const DEFAULT_LOCK_IO = {
 /**
  * The project's memory configuration, from the `roveMemory` field of the
  * checkout's package.json:
- * `{ "project": "<display name>", "remote": "<private memory repository URL>" }`.
+ * `{ "project": "<display name>", "remote": "<private memory repository URL>",
+ * "stateName": "<lock and lease file name>" }`. `remote` may be left out and
+ * kept in the repository's local Git configuration instead (a public project
+ * need not publish the address of its private memory); `stateName` defaults
+ * to `rove-memory`.
  */
 export function parseProjectConfig(raw, source = 'package.json') {
   let manifest;
@@ -65,14 +78,85 @@ export function parseProjectConfig(raw, source = 'package.json') {
       `${source} has no "${CONFIG_FIELD}" object; add { "project": "<name>", "remote": "<private memory repository URL>" }.`,
     );
   }
-  const { project, remote } = config;
+  const { project, remote, stateName = DEFAULT_STATE_NAME } = config;
   if (typeof project !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(project)) {
     throw new Error(`"${CONFIG_FIELD}.project" must be 1-64 letters, digits, spaces, dots, hyphens or underscores.`);
   }
-  if (typeof remote !== 'string' || !isNetworkRemote(remote)) {
+  if (remote !== undefined && (typeof remote !== 'string' || !isNetworkRemote(remote))) {
     throw new Error(`"${CONFIG_FIELD}.remote" must be an https:// or SSH Git URL.`);
   }
-  return { project, remote };
+  if (typeof stateName !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(stateName)) {
+    throw new Error(`"${CONFIG_FIELD}.stateName" must be 1-64 lowercase letters, digits or hyphens.`);
+  }
+  return { project, remote: remote ?? null, stateName };
+}
+
+/**
+ * The memory remote of a project: `roveMemory.remote` from package.json, or
+ * the repository's local `rove-memory.remote` setting. Both may be present
+ * only when they name the same repository; neither is an error that says how
+ * to set one. A local value is validated like a configured one, and is never
+ * shown when it is invalid (it could carry a credential).
+ */
+export function chooseRemote(configured, local) {
+  if (local !== null && !isNetworkRemote(local)) {
+    throw new Error(`The local Git setting ${LOCAL_REMOTE_KEY} is not an https:// or SSH Git URL without credentials; fix it with git config --local ${LOCAL_REMOTE_KEY} <URL>.`);
+  }
+  if (configured && local && normalizeRemote(configured) !== normalizeRemote(local)) {
+    throw new Error(`Two different memory remotes are configured: "${CONFIG_FIELD}.remote" in package.json (${configured}) and the local Git setting ${LOCAL_REMOTE_KEY} (${local}). Remove one of them.`);
+  }
+  const remote = configured ?? local;
+  if (!remote) {
+    throw new Error(`No memory remote is configured. Run setup once on this computer with --remote <private memory repository URL> (it is kept in this repository's local Git setting ${LOCAL_REMOTE_KEY}), or add "remote" to "${CONFIG_FIELD}" in package.json.`);
+  }
+  return remote;
+}
+
+function localRemote(checkoutRoot) {
+  const result = git(['config', '--local', '--get', LOCAL_REMOTE_KEY], checkoutRoot, { allowFailure: true });
+  const value = result.status === 0 ? result.stdout.trim() : '';
+  return value || null;
+}
+
+/**
+ * Store a remote given with `setup --remote` in the repository's local Git
+ * configuration (shared by its linked worktrees, never committed). It is
+ * refused when package.json already names the remote, or when a different
+ * one is stored.
+ */
+function storeLocalRemote(checkoutRoot, configured, requested) {
+  if (!isNetworkRemote(requested)) {
+    throw new Error('--remote must be an https:// or SSH Git URL without credentials, a query or a fragment.');
+  }
+  if (configured) {
+    if (normalizeRemote(configured) !== normalizeRemote(requested)) {
+      throw new Error(`--remote differs from "${CONFIG_FIELD}.remote" in package.json (${configured}); this project's remote is set there.`);
+    }
+    return;
+  }
+  const stored = localRemote(checkoutRoot);
+  if (stored && normalizeRemote(stored) !== normalizeRemote(requested)) {
+    throw new Error(`This repository already stores ${LOCAL_REMOTE_KEY} = ${isNetworkRemote(stored) ? stored : '(an invalid value)'}; change it with git config --local ${LOCAL_REMOTE_KEY} <URL> if that is intended.`);
+  }
+  if (!stored) git(['config', '--local', LOCAL_REMOTE_KEY, requested], checkoutRoot);
+}
+
+/** The lock and lease file names of the running command (set from its project's configuration). */
+let stateName = DEFAULT_STATE_NAME;
+
+/**
+ * Read the project's configuration for a command: its name, its memory
+ * remote (resolved for the test suites), and the names of the lock and lease
+ * files, which every later step of the command uses.
+ */
+function projectContext(checkoutRoot) {
+  const config = readProjectConfig(checkoutRoot);
+  stateName = config.stateName;
+  return { project: config.project, configuredRemote: config.remote, stateName: config.stateName };
+}
+
+function resolvedRemote(checkoutRoot, configuredRemote) {
+  return resolveMemoryRemote(chooseRemote(configuredRemote, localRemote(checkoutRoot)));
 }
 
 /**
@@ -292,7 +376,7 @@ export function validateMemoryBranch(branch) {
 }
 
 const COMMANDS = ['setup', 'status', 'sync', 'edit', 'release'];
-const USAGE = 'Usage: rove-memory <setup|status|sync|edit|release> --agent <harness-id> [--message <text>] [--lease <token>] [--holder-pid <pid>] [--renew] [--reclaim-stale]';
+const USAGE = 'Usage: rove-memory <setup|status|sync|edit|release> --agent <harness-id> [--message <text>] [--lease <token>] [--holder-pid <pid>] [--renew] [--reclaim-stale] [--remote <url> (setup)]';
 
 export function parseArguments(argv) {
   // A package-manager separator ("pnpm memory -- sync ...") is not an option.
@@ -329,6 +413,13 @@ export function parseArguments(argv) {
       options.renew = true;
     } else if (option === '--reclaim-stale') {
       options.reclaimStale = true;
+    } else if (option === '--remote') {
+      const value = rest[index + 1];
+      if (value === undefined || value.startsWith('--')) {
+        throw new Error('--remote requires the private memory repository URL.');
+      }
+      options.remote = value;
+      index += 1;
     } else {
       throw new Error(`Unknown option: ${option}`);
     }
@@ -352,6 +443,9 @@ export function parseArguments(argv) {
   if (command === 'release' && !options.lease) {
     throw new Error('release requires --lease <token>.');
   }
+  if (options.remote !== undefined && command !== 'setup') {
+    throw new Error('--remote applies to setup only.');
+  }
 
   return {
     command,
@@ -361,6 +455,7 @@ export function parseArguments(argv) {
     holderPid: options.holderPid,
     renew: options.renew,
     reclaimStale: options.reclaimStale,
+    remote: options.remote,
   };
 }
 
@@ -569,7 +664,7 @@ export function acquireMemoryLock(
   operation,
   lockIo = DEFAULT_LOCK_IO,
 ) {
-  const lockPath = path.join(commonGitDirectory, LOCK_FILE);
+  const lockPath = path.join(commonGitDirectory, `${stateName}.lock`);
   const lockToken = randomUUID();
   const lockContents = `${JSON.stringify({
     agent: agentId,
@@ -809,7 +904,7 @@ export function classifyLease(lease, { now = Date.now(), probe = probeProcess, t
 }
 
 function leasePath(commonGitDirectory) {
-  return path.join(commonGitDirectory, LEASE_FILE);
+  return path.join(commonGitDirectory, `${stateName}.lease`);
 }
 
 function readLease(commonGitDirectory) {
@@ -1262,10 +1357,11 @@ function configureClaude(checkoutRoot, memoryRoot) {
 // Commands
 // ---------------------------------------------------------------------------
 
-function setup(agentId, cwd) {
+function setup(agentId, cwd, requestedRemote) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const { project, remote: configuredRemote } = readProjectConfig(checkoutRoot);
-  const remote = resolveMemoryRemote(configuredRemote);
+  const { project, configuredRemote } = projectContext(checkoutRoot);
+  if (requestedRemote !== undefined) storeLocalRemote(checkoutRoot, configuredRemote, requestedRemote);
+  const remote = resolvedRemote(checkoutRoot, configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
   const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, 'setup');
   let published = null;
@@ -1358,10 +1454,10 @@ function setup(agentId, cwd) {
 
 function status(agentId, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const { project, remote: configuredRemote } = readProjectConfig(checkoutRoot);
-  const remote = resolveMemoryRemote(configuredRemote);
+  const { project, configuredRemote } = projectContext(checkoutRoot);
+  const remote = resolvedRemote(checkoutRoot, configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
-  console.log(`Project: ${project} (memory remote ${remote})`);
+  console.log(`Project: ${project} (memory remote ${remote}${configuredRemote ? '' : `, from the local Git setting ${LOCAL_REMOTE_KEY}`})`);
   console.log(`Canonical checkout: ${canonicalRoot}`);
   console.log(`Current checkout: ${checkoutRoot}`);
   console.log(`Memory repository: ${memoryRoot}`);
@@ -1437,7 +1533,7 @@ function requireMemoryReady(memoryRoot, agentId, remote) {
 
 function edit(agentId, { holderPid, renew, lease: token, reclaimStale }, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const remote = resolveMemoryRemote(readProjectConfig(checkoutRoot).remote);
+  const remote = resolvedRemote(checkoutRoot, projectContext(checkoutRoot).configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
   const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, renew ? 'edit --renew' : 'edit');
   try {
@@ -1665,7 +1761,7 @@ function renewLease(memoryRoot, commonGitDirectory, agentId, token) {
 
 function release(agentId, token, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const remote = resolveMemoryRemote(readProjectConfig(checkoutRoot).remote);
+  const remote = resolvedRemote(checkoutRoot, projectContext(checkoutRoot).configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
   const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, 'release');
   try {
@@ -1693,8 +1789,8 @@ function release(agentId, token, cwd) {
 
 function sync(agentId, message, token, cwd) {
   const { checkoutRoot, canonicalRoot, commonGitDirectory } = discoverRoots(cwd);
-  const { project, remote: configuredRemote } = readProjectConfig(checkoutRoot);
-  const remote = resolveMemoryRemote(configuredRemote);
+  const { project, configuredRemote } = projectContext(checkoutRoot);
+  const remote = resolvedRemote(checkoutRoot, configuredRemote);
   const memoryRoot = path.join(canonicalRoot, MEMORY_DIRECTORY);
   const releaseLock = acquireMemoryLock(commonGitDirectory, agentId, 'sync');
   try {
@@ -1839,7 +1935,7 @@ function sync(agentId, message, token, cwd) {
 export function main(argv = process.argv.slice(2), cwd = process.cwd()) {
   const parsed = parseArguments(argv);
   const { command, agentId, message } = parsed;
-  if (command === 'setup') setup(agentId, cwd);
+  if (command === 'setup') setup(agentId, cwd, parsed.remote);
   if (command === 'status') status(agentId, cwd);
   if (command === 'sync') sync(agentId, message, parsed.lease, cwd);
   if (command === 'edit') edit(agentId, parsed, cwd);

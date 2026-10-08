@@ -60,6 +60,31 @@ the project itself.
 
 To move a project to a newer version, change the pinned commit.
 
+### Keeping the memory's address out of a public project
+
+A public project may not want to publish the address of its private memory
+repository. Leave `remote` out of `roveMemory` and give it once on each
+computer instead:
+
+```text
+pnpm memory setup --agent claude --remote https://github.com/<owner>/<project>-agent-memory.git
+```
+
+`setup` keeps it in the repository's local Git configuration
+(`git config --local rove-memory.remote`), which every linked worktree shares
+and which is never committed; every later command reads it from there. A
+different value is never overwritten silently, and package.json and the local
+setting may both be present only when they name the same repository.
+
+### Sharing the lock and lease with another tool
+
+The lock and lease are `<stateName>.lock` and `<stateName>.lease` in the
+project's Git directory, with `stateName` defaulting to `rove-memory`. A
+project moving from an earlier copy of this tool can set
+`"stateName": "<the old name>"` in `roveMemory`, so that sessions still
+running the old copy and sessions running Rove Memory exclude each other
+while both are in use. The lease format is the same.
+
 ### A section for the project's agent files
 
 ```markdown
@@ -89,7 +114,7 @@ From any checkout or linked worktree of the project:
 
 | Command | What it does |
 |---|---|
-| `pnpm memory setup --agent <id>` | Clone or fast-forward `.agent-memory/`, create and publish `<id>/` when it is missing; for `claude`, point this checkout's `autoMemoryDirectory` at it. |
+| `pnpm memory setup --agent <id> [--remote <url>]` | Clone or fast-forward `.agent-memory/`, create and publish `<id>/` when it is missing; for `claude`, point this checkout's `autoMemoryDirectory` at it. `--remote` stores the memory remote in the repository's local Git configuration. |
 | `pnpm memory status --agent <id>` | Project, memory remote, folder bounds, unsynced changes, unpublished commits, the edit lease, and Claude Code's configuration. |
 | `pnpm memory edit --agent <id> [--holder-pid <pid>]` | Take the edit lease and print its token. `--renew --lease <token>` after a commit of the same agent landed; `--reclaim-stale` for a lease whose holder is gone. |
 | `pnpm memory sync --agent <id> --lease <token> [--message <text>]` | Validate, commit, rebase, push, and release the lease. |
@@ -141,9 +166,10 @@ instructions say, and write through the same lease.
 ### The edit lease
 
 Commands that change the memory checkout or the lease hold one operation lock
-(`rove-memory.lock` in the project's Git directory), so linked worktrees never
+(`rove-memory.lock`, or `<stateName>.lock`, in the project's Git directory), so linked worktrees never
 change the checkout at the same time. File writes cannot be locked, which is
-what the lease (`rove-memory.lease`, same directory) is for:
+what the lease (`rove-memory.lease` or `<stateName>.lease`, same directory)
+is for:
 
 - A lease with a holder pid is live while that process exists with the same
   start time, and stale once it is gone; a probe that cannot read the start
