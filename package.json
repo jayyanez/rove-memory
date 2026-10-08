@@ -1,0 +1,53 @@
+{
+  "name": "rove-memory",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Portable memory for coding agents: one private Git repository per project, checked out as .agent-memory/, one folder per agent, written under an edit lease.",
+  "keywords": [
+    "agents",
+    "claude-code",
+    "codex",
+    "memory",
+    "git"
+  ],
+  "license": "Apache-2.0",
+  "author": "Jay Yanez",
+  "homepage": "https://github.com/jayyanez/rove-memory#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jayyanez/rove-memory.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jayyanez/rove-memory/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "rove-memory": "bin/rove-memory.mjs"
+  },
+  "exports": {
+    ".": "./rove-memory.mjs"
+  },
+  "files": [
+    "rove-memory.mjs",
+    "bin/",
+    "POLICY.md",
+    "README.md",
+    "CHANGELOG.md",
+    "NOTICE"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "review:doctor": "rove-sentinel doctor",
+    "review:gate": "rove-sentinel gate",
+    "review:status": "rove-sentinel status",
+    "review:install": "rove-sentinel install",
+    "review:defer": "rove-sentinel defer",
+    "review:updates": "rove-sentinel updates"
+  },
+  "devDependencies": {
+    "rove-sentinel": "https://github.com/jayyanez/rove-sentinel/releases/download/v1.11.2/rove-sentinel-1.11.2.tgz"
+  }
+}

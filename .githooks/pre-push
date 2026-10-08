@@ -1,0 +1,23 @@
+#!/bin/sh
+# Pre-push hook, enabled by `pnpm review:install` (which sets core.hooksPath to .githooks).
+#  1. Refuses pushes to main: every change reaches GitHub through a pull request
+#     (AGENTS.md); the branch is also protected on GitHub.
+#  2. Hands the same ref updates to Rove Sentinel, which only lets through
+#     commits that passed AI review (AGENTS.md, Review).
+set -eu
+root=$(git rev-parse --show-toplevel)
+
+# Git passes "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin.
+# Read them once and replay them to Sentinel.
+updates=$(cat)
+
+if printf '%s\n' "$updates" | awk '$3 == "refs/heads/main" { found = 1 } END { exit !found }'; then
+  echo "pre-push: pushing to main is not allowed. Push a branch and open a pull request." >&2
+  exit 1
+fi
+
+if [ -n "$updates" ]; then
+  printf '%s\n' "$updates" | exec node "$root/.githooks/sentinel.mjs" pre-push "$@"
+else
+  exec node "$root/.githooks/sentinel.mjs" pre-push "$@" < /dev/null
+fi

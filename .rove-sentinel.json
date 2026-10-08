@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "charter": "docs/review/charter.md",
+  "lessons": "docs/review/lessons.md",
+  "guiEvidence": "none",
+  "clippy": false,
+  "trustedAuthors": ["jayyanez"],
+  "providers": "auto"
+}
