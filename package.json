@@ -48,6 +48,6 @@
     "review:updates": "rove-sentinel updates"
   },
   "devDependencies": {
-    "rove-sentinel": "https://github.com/jayyanez/rove-sentinel/releases/download/v1.11.2/rove-sentinel-1.11.2.tgz"
+    "rove-sentinel": "https://github.com/jayyanez/rove-sentinel/releases/download/v1.15.0/rove-sentinel-1.15.0.tgz"
   }
 }
