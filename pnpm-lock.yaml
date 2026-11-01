@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       rove-sentinel:
-        specifier: https://github.com/jayyanez/rove-sentinel/releases/download/v1.11.2/rove-sentinel-1.11.2.tgz
-        version: https://github.com/jayyanez/rove-sentinel/releases/download/v1.11.2/rove-sentinel-1.11.2.tgz
+        specifier: https://github.com/jayyanez/rove-sentinel/releases/download/v1.15.0/rove-sentinel-1.15.0.tgz
+        version: https://github.com/jayyanez/rove-sentinel/releases/download/v1.15.0/rove-sentinel-1.15.0.tgz
 
 packages:
 
@@ -159,9 +159,9 @@ packages:
   parse-entities@4.0.2:
     resolution: {integrity: sha512-GG2AQYWoLgL877gQIKeRPGO1xF9+eG1ujIb5soS5gPvLQ1y2o8FL90w2QWNdf9I361Mpp7726c+lj3U0qK1uGw==}
 
-  rove-sentinel@https://github.com/jayyanez/rove-sentinel/releases/download/v1.11.2/rove-sentinel-1.11.2.tgz:
-    resolution: {integrity: sha512-DyUjWuURZVmkLMwbyDddjucPEZNKIdIF6PEE/lA+uOl938rbdPIFbUe0K6Pqx6TAiBAC5kTWq4Ed+2BDr6wdOQ==, tarball: https://github.com/jayyanez/rove-sentinel/releases/download/v1.11.2/rove-sentinel-1.11.2.tgz}
-    version: 1.11.2
+  rove-sentinel@https://github.com/jayyanez/rove-sentinel/releases/download/v1.15.0/rove-sentinel-1.15.0.tgz:
+    resolution: {integrity: sha512-md8Lt2QdF+Xz6eQNCXd+VOGG8aOw/GyuzsyCe+q4FKsGUK4BOX00C8nCbJdfPDGCIZOlBAziPBA8RTb5IoPGZA==, tarball: https://github.com/jayyanez/rove-sentinel/releases/download/v1.15.0/rove-sentinel-1.15.0.tgz}
+    version: 1.15.0
     engines: {node: '>=22'}
     hasBin: true
 
@@ -411,7 +411,7 @@ snapshots:
       is-decimal: 2.0.1
       is-hexadecimal: 2.0.1
 
-  rove-sentinel@https://github.com/jayyanez/rove-sentinel/releases/download/v1.11.2/rove-sentinel-1.11.2.tgz:
+  rove-sentinel@https://github.com/jayyanez/rove-sentinel/releases/download/v1.15.0/rove-sentinel-1.15.0.tgz:
     dependencies:
       markdownlint: 0.38.0
     transitivePeerDependencies:
