@@ -77,4 +77,6 @@ in that repository, then run each `Next:` line it prints exactly as printed:
 while the old engine is active, those that run repair are that same line with
 options after `--` (such as `-- --stop-orphans`). Never resume, recover or
 delete Sentinel state by hand. The owner never does this manually: it is
-always an agent's job.
+always an agent's job. This is about Sentinel itself (its watcher, a lock, an
+engine update), not a review's verdict: a gate that fails on verified
+findings is working, and those findings are resolved or dismissed as above.
