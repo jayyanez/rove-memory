@@ -72,8 +72,9 @@ state, or an update that does not activate, run
 `Next:` lines exactly as printed. If `repair` is an unknown command (the
 active engine predates 1.20.1), or it fails before printing any `Next:` line
 (for example an engine that does not start, or one that dies on an unhandled
-error), run the bootstrap line from Rove Sentinel's troubleshooting guide,
-section "Repair on an engine before 1.20.1"
+error; a repair that a person interrupted has not failed and is not rerun),
+run the bootstrap line from Rove Sentinel's troubleshooting guide, section
+"Repair on an engine before 1.20.1"
 (<https://github.com/jayyanez/rove-sentinel/blob/main/docs/troubleshooting.md#repair-on-an-engine-before-1201>,
 the guide on `main`, whose line always fetches the newest release that can
 repair), in that repository, then run each `Next:` line it prints exactly as
