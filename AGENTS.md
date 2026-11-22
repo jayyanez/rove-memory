@@ -77,10 +77,11 @@ run the bootstrap line from Rove Sentinel's troubleshooting guide, section
 "Repair on an engine before 1.20.1"
 (<https://github.com/jayyanez/rove-sentinel/blob/main/docs/troubleshooting.md#repair-on-an-engine-before-1201>,
 the guide on `main`, whose line always fetches the newest release that can
-repair), in that repository, then run each `Next:` line it prints exactly as
-printed: while the old engine is active, those that run repair are that same
-line with options after `--` (such as `-- --stop-orphans`). If the bootstrap
-line also fails before printing any `Next:` line, stop and report its output.
+repair), in that repository, with any options the failed `repair` had after
+`--`, then run each `Next:` line it prints exactly as printed: while the old
+engine is active, those that run repair are that same line with options
+after `--` (such as `-- --stop-orphans`). If the bootstrap line also fails
+before printing any `Next:` line, stop and report its output.
 Never resume, recover or delete Sentinel state by hand. The owner never does
 this manually: it is always an agent's job. This is about Sentinel itself (its watcher, a lock, an
 engine update), not a review's verdict: a gate that fails on verified
