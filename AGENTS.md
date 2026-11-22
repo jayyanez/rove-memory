@@ -65,3 +65,18 @@ dismiss every verified finding, and push only the head that passed. The
 charter (`docs/review/charter.md`), the lessons and this file are review
 policy. Contributors without Sentinel say so in their pull request, and a
 maintainer completes the review.
+
+When any Rove Sentinel output reports a paused, stopped, locked or blocked
+state, or an update that does not activate, run
+`npx --no-install rove-sentinel repair` in that repository and run each of its
+`Next:` lines exactly as printed. If `repair` is an unknown command, the
+active engine predates 1.20.1: run the bootstrap line from Rove Sentinel's
+troubleshooting guide, section "Repair on an engine before 1.20.1"
+(<https://github.com/jayyanez/rove-sentinel/blob/main/docs/troubleshooting.md#repair-on-an-engine-before-1201>),
+in that repository, then run each `Next:` line it prints exactly as printed:
+while the old engine is active, those that run repair are that same line with
+options after `--` (such as `-- --stop-orphans`). Never resume, recover or
+delete Sentinel state by hand. The owner never does this manually: it is
+always an agent's job. This is about Sentinel itself (its watcher, a lock, an
+engine update), not a review's verdict: a gate that fails on verified
+findings is working, and those findings are resolved or dismissed as above.
